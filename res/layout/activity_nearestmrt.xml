@@ -30,7 +30,7 @@
                 android:textSize="@dimen/txt_medium" />
 
             <TextView
-                android:id="@+id/NearestMRTLocation"
+                android:id="@+id/TextNearestMRTName"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="@string/loading"

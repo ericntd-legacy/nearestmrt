@@ -14,6 +14,21 @@ import java.util.List;
 
 import org.json.JSONObject;
 
+import com.fuzzybee7.application.MyApplication;
+import com.fuzzybee7.entities.Direction;
+import com.fuzzybee7.entities.MRT;
+import com.fuzzybee7.parsers.DirectionJSONParser;
+import com.fuzzybee7.parsers.PlaceJSONParser;
+import com.fuzzybee7.tasks.DirectionsParserTask;
+import com.fuzzybee7.tasks.DirectionsParserTaskCallback;
+import com.fuzzybee7.tasks.DirectionsTask;
+import com.fuzzybee7.tasks.JsonTask;
+import com.fuzzybee7.tasks.PlacesParserTask;
+import com.fuzzybee7.tasks.PlacesParserTaskCallback;
+import com.fuzzybee7.tasks.PlacesTask;
+import com.fuzzybee7.tasks.JsonTaskCallback;
+import com.fuzzybee7.utils.LocationUtils;
+
 import com.google.analytics.tracking.android.EasyTracker;
 import com.google.android.gms.common.ConnectionResult;
 import com.google.android.gms.common.GooglePlayServicesUtil;
@@ -36,6 +51,7 @@ import android.location.LocationManager;
 import android.os.AsyncTask;
 import android.os.Bundle;
 import android.os.Handler;
+import android.app.ActionBar;
 import android.app.Activity;
 import android.content.Context;
 import android.content.Intent;
@@ -48,21 +64,40 @@ import android.util.Log;
 import android.view.Menu;
 import android.view.View;
 import android.view.View.OnClickListener;
+import android.view.Window;
 import android.widget.Button;
 import android.widget.TextView;
 import android.widget.Toast;
 
-public class NearestMRTActivity extends FragmentActivity {
+public class NearestMRTActivity extends FragmentActivity implements
+		PlacesParserTaskCallback, JsonTaskCallback,
+		DirectionsParserTaskCallback {
 	// Debugging
-	private final String DEBUG = "NearestMRT";
+	private final String TAG = "NearestMRTActivity";
 	private final boolean D = true;
 
 	/*
 	 * Constants
 	 */
 	private final String PREFS = "NearestMRTPreferences";
-	
+
 	private final String PREF_MAP_TYPE = "MapType";
+
+	final String URL_GOOGLE_PLACES_API = "https://maps.googleapis.com/maps/api/place/nearbysearch/json?";
+	final String PARAM_LOCATION = "location=";
+	final String PARAM_RADIUS = "&radius=1111";
+	final String PARAM_SORT_BY = "&rankBy=" + "distance";
+	final String PARAM_TYPE = "&types=" + "subway_station";
+	final String PARAM_SENSOR = "&sensor=true";
+	final String PARAM_KEY = "&key=AIzaSyCCPl_JtGPUQaQ9yZIyK-dvsduyWZy4ZAs";
+
+	final String URL_GOOGLE_DIRECTIONS_API = "http://maps.google.com/maps/api/directions/json?";
+	final String PARAM_ORIGIN = "origin=";
+	final String PARAM_DEST = "&destination=";
+	final String PARAM_MODE = "&mode=walking";
+
+	private static final byte TASK_PLACES_DOWNLOAD = 1;
+	private static final byte TASK_DIRECTIONS_DOWNLOAD = 2;
 
 	public static final String DEF_LAT = "1.371924";
 	public static final String DEF_LON = "103.896999";
@@ -70,8 +105,9 @@ public class NearestMRTActivity extends FragmentActivity {
 	public static final double LAT_NEX = 1.350610;
 	public static final double LON_NEX = 103.872263;
 
-	// private final boolean MAP_TYPE_NORMAL = true;// true means map and false mean satellite
-	//  final byte MAP_TYPE_SATELLITE = 2;
+	// private final boolean MAP_TYPE_NORMAL = true;// true means map and false
+	// mean satellite
+	// final byte MAP_TYPE_SATELLITE = 2;
 
 	// private static final int TWO_MINUTES = 1000 * 60 * 2;
 
@@ -104,27 +140,104 @@ public class NearestMRTActivity extends FragmentActivity {
 	private TextView wt;
 	private Button btnMapTypeSwitch;
 
-	private boolean mapTypeNormal = true; // true means map view, false means satellite view
-	
+	private boolean mapTypeNormal = true; // true means map view, false means
+											// satellite view
+
 	@Override
 	protected void onCreate(Bundle savedInstanceState) {
 		super.onCreate(savedInstanceState);
+		
+		/*
+		 * without the following or the declaration in styles.xml, I won't have action bar
+		 */
+		// getWindow().requestFeature(Window.FEATURE_ACTION_BAR);
+		
 		setContentView(R.layout.activity_nearestmrt);
 		
-		checkPrerequisites();
-		
+//		ActionBar actionBar = this.getActionBar();
+//		actionBar.show();
+
+		checkGooglePlayServices();
+
 		initialisePrefs();
 
 		// Getting Google Map
 		// MapFragment fragment = (MapFragment)
 		// getFragmentManager().findFragmentById(R.id.map);
 		initialiseMap();
-		
+
 		// mGoogleMap.setOnMyLocationChangeListener(listener);
 
 		// Initiate the views
 		initialiseViews();
 
+		initLocation();
+
+		/**
+		 * Handles application preferences which include current longitude and
+		 * latitude
+		 */
+		// Retrieve the shared preferences
+
+		// Register the listener with the Location Manager to receive location
+		// updates
+		// String locationProvider2 = LocationManager.NETWORK_PROVIDER;
+
+		// ---------
+
+		Location lastKnownLocation = locationManager
+				.getLastKnownLocation(locationProvider2);
+		// Location lastKnownLocation =
+		// mlocManager.getLastKnownLocation(locationProvider1);
+
+		if (lastKnownLocation != null) {
+			double mLatitude = lastKnownLocation.getLatitude();
+			double mLongitude = lastKnownLocation.getLongitude();
+
+			curLoc = new LatLng(mLatitude, mLongitude);
+
+			gooleMap.moveCamera(CameraUpdateFactory.newLatLng(curLoc));
+			gooleMap.animateCamera(CameraUpdateFactory.zoomTo(15));
+
+			// Toast.makeText(getApplicationContext(), "Cached location found",
+			// Toast.LENGTH_LONG).show();
+
+			// SharedPreferences.Editor prefEditor = prefs.edit();
+			prefEditor.putString("curLat", String.valueOf(mLatitude));
+			prefEditor.putString("curLong", String.valueOf(mLongitude));
+
+			if (D)
+				Log.d(TAG, "location was cached, lat was " + mLatitude
+						+ " and lon was " + mLongitude);
+			prefEditor.commit();
+
+			getNearestMRT();
+			// Test using dependency injection???
+			// getNearestMRT(LAT_NEX, LON_NEX);//NEX
+		} else {
+			if (D)
+				Log.w(TAG, "No cached location found");
+			// Toast.makeText(getApplicationContext(),
+			// "No cached location found",
+			// Toast.LENGTH_LONG).show();
+		}
+
+		/**
+		 * Handles application preferences which include current longitude and
+		 * latitude
+		 */
+		// Retrieve the shared preferences
+		// prefs = getSharedPreferences(PREFS,
+		// Context.MODE_PRIVATE);
+		initialiseButtons();
+
+		/*
+		 * Google Analytics
+		 */
+
+	}
+
+	private void initLocation() {
 		// ---------
 		// Acquire a reference to the system Location Manager
 		locationManager = (LocationManager) this
@@ -162,33 +275,33 @@ public class NearestMRTActivity extends FragmentActivity {
 		}
 
 		// Define a listener that responds to location updates
-		LocationListener locationListener = new LocationListener() {
-			@Override
-			public void onLocationChanged(Location location) {
-				// Called when a new location is found by the network location
-				// provider.
-				if (D)
-					Log.i(DEBUG, "Updating current location");
-				Toast.makeText(getApplicationContext(),
-						"Updating current location", Toast.LENGTH_LONG).show();
-			}
-
-			public void onStatusChanged(String provider, int status,
-					Bundle extras) {
-				if (D)
-					Log.i(DEBUG, "status changed");
-			}
-
-			public void onProviderEnabled(String provider) {
-				if (D)
-					Log.i(DEBUG, "location enabled");
-			}
-
-			public void onProviderDisabled(String provider) {
-				if (D)
-					Log.i(DEBUG, "Location disabled");
-			}
-		};
+		// LocationListener locationListener = new LocationListener() {
+		// @Override
+		// public void onLocationChanged(Location location) {
+		// // Called when a new location is found by the network location
+		// // provider.
+		// if (D)
+		// Log.i(TAG, "Updating current location");
+		// Toast.makeText(getApplicationContext(),
+		// "Updating current location", Toast.LENGTH_LONG).show();
+		// }
+		//
+		// public void onStatusChanged(String provider, int status,
+		// Bundle extras) {
+		// if (D)
+		// Log.i(TAG, "status changed");
+		// }
+		//
+		// public void onProviderEnabled(String provider) {
+		// if (D)
+		// Log.i(TAG, "location enabled");
+		// }
+		//
+		// public void onProviderDisabled(String provider) {
+		// if (D)
+		// Log.i(TAG, "Location disabled");
+		// }
+		// };
 
 		if (network_enabled) {
 			locationManager.requestLocationUpdates(
@@ -198,107 +311,43 @@ public class NearestMRTActivity extends FragmentActivity {
 			locationManager.requestLocationUpdates(
 					LocationManager.GPS_PROVIDER, 1, 1, gpsLocListener);
 		}
-
-		/**
-		 * Handles application preferences which include current longitude and
-		 * latitude
-		 */
-		// Retrieve the shared preferences
-
-
-		// Register the listener with the Location Manager to receive location
-		// updates
-		// String locationProvider2 = LocationManager.NETWORK_PROVIDER;
-
-		// ---------
-
-		Location lastKnownLocation = locationManager
-				.getLastKnownLocation(locationProvider2);
-		// Location lastKnownLocation =
-		// mlocManager.getLastKnownLocation(locationProvider1);
-
-		if (lastKnownLocation != null) {
-			double mLatitude = lastKnownLocation.getLatitude();
-			double mLongitude = lastKnownLocation.getLongitude();
-
-			curLoc = new LatLng(mLatitude, mLongitude);
-
-			gooleMap.moveCamera(CameraUpdateFactory.newLatLng(curLoc));
-			gooleMap.animateCamera(CameraUpdateFactory.zoomTo(15));
-
-			Toast.makeText(getApplicationContext(), "Cached location found",
-					Toast.LENGTH_LONG).show();
-
-			// SharedPreferences.Editor prefEditor = prefs.edit();
-			prefEditor.putString("curLat", String.valueOf(mLatitude));
-			prefEditor.putString("curLong", String.valueOf(mLongitude));
-
-			if (D)
-				Log.d(DEBUG, "location was cached, lat was " + mLatitude
-						+ " and lon was " + mLongitude);
-			prefEditor.commit();
-
-			getNearestMRT(mLatitude, mLongitude);
-			// Test using dependency injection???
-			// getNearestMRT(LAT_NEX, LON_NEX);//NEX
-		} else {
-			if (D)
-				Log.d(DEBUG, "No cached location found");
-			Toast.makeText(getApplicationContext(), "No cached location found",
-					Toast.LENGTH_LONG).show();
-		}
-
-		/**
-		 * Handles application preferences which include current longitude and
-		 * latitude
-		 */
-		// Retrieve the shared preferences
-//		prefs = getSharedPreferences(PREFS,
-//				Context.MODE_PRIVATE);
-		initialiseButtons();
-		
-		/*
-		 * Google Analytics
-		 */
-		
 	}
-	
-	private void checkPrerequisites() {
+
+	private void checkGooglePlayServices() {
 		// Checking whether Google Play Services in place and working
-				int status = GooglePlayServicesUtil
-						.isGooglePlayServicesAvailable(getApplicationContext());
-				if (D) {
-					if (status == ConnectionResult.SUCCESS) {
-						// Success! Do what you want
-						Log.i(DEBUG, "Google Play Services all good");
-					} else if (status == ConnectionResult.SERVICE_MISSING) {
-						Log.e(DEBUG, "Google Play Services not in place");
-					} else if (status == ConnectionResult.SERVICE_VERSION_UPDATE_REQUIRED) {
-						Log.e(DEBUG, "Google Play Serivices outdated");
-					} else if (status == ConnectionResult.SERVICE_DISABLED) {
-						Log.e(DEBUG, "Google Plauy Services disabled");
-					} else if (status == ConnectionResult.SERVICE_INVALID) {
-						Log.e(DEBUG,
-								"Google Play Serivices invalid but wtf does that mean?");
-					} else {
-						Log.e(DEBUG, "No way this is gonna happen");
-					}
-				}
+		int status = GooglePlayServicesUtil
+				.isGooglePlayServicesAvailable(getApplicationContext());
+		if (D) {
+			if (status == ConnectionResult.SUCCESS) {
+				// Success! Do what you want
+				Log.i(TAG, "Google Play Services all good");
+			} else if (status == ConnectionResult.SERVICE_MISSING) {
+				Log.e(TAG, "Google Play Services not in place");
+			} else if (status == ConnectionResult.SERVICE_VERSION_UPDATE_REQUIRED) {
+				Log.e(TAG, "Google Play Serivices outdated");
+			} else if (status == ConnectionResult.SERVICE_DISABLED) {
+				Log.e(TAG, "Google Plauy Services disabled");
+			} else if (status == ConnectionResult.SERVICE_INVALID) {
+				Log.e(TAG,
+						"Google Play Serivices invalid but wtf does that mean?");
+			} else {
+				Log.e(TAG, "No way this is gonna happen");
+			}
+		}
 	}
-	
+
 	private void initialisePrefs() {
-		this.prefs = getSharedPreferences(PREFS,
-		Context.MODE_PRIVATE);
-		
+		this.prefs = getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+
 		prefEditor = prefs.edit();
 	}
-	
+
 	private void initialiseViews() {
-		this.nearestMRTLoc = (TextView) findViewById(R.id.NearestMRTLocation);
+		this.nearestMRTLoc = (TextView) findViewById(R.id.TextNearestMRTName);
 		this.wd = (TextView) findViewById(R.id.WalkingDistance);
 		this.wt = (TextView) findViewById(R.id.WalkingTime);
 	}
-	
+
 	private void initialiseButtons() {
 		this.btnMapTypeSwitch = (Button) findViewById(R.id.BtnMapTypeSwitch);
 		this.btnMapTypeSwitch.setOnClickListener(new OnClickListener() {
@@ -307,12 +356,12 @@ public class NearestMRTActivity extends FragmentActivity {
 				if (mapTypeNormal) {
 					gooleMap.setMapType(GoogleMap.MAP_TYPE_SATELLITE);
 					mapTypeNormal = false;
-					
+
 					btnMapTypeSwitch.setText(R.string.btn_map_view);
 				} else {
 					gooleMap.setMapType(GoogleMap.MAP_TYPE_NORMAL);
 					mapTypeNormal = true;
-					
+
 					btnMapTypeSwitch.setText(R.string.btn_satellite_view);
 				}
 				prefEditor.putBoolean(PREF_MAP_TYPE, mapTypeNormal);
@@ -320,83 +369,90 @@ public class NearestMRTActivity extends FragmentActivity {
 			}
 		});
 	}
-	
+
 	private void initialiseMap() {
 		SupportMapFragment fragment = (SupportMapFragment) getSupportFragmentManager()
 				.findFragmentById(R.id.map);
 		this.gooleMap = fragment.getMap();// returns null why?
-		this.gooleMap.setMyLocationEnabled(true);// without this the blue bubble will
-											// not show so it's very
-											// important!!!
-		
+		this.gooleMap.setMyLocationEnabled(true);// without this the blue bubble
+													// will
+		// not show so it's very
+		// important!!!
+
 		this.mapTypeNormal = prefs.getBoolean(PREF_MAP_TYPE, true);
-		if (!mapTypeNormal){
+		if (!mapTypeNormal) {
 			this.gooleMap.setMapType(GoogleMap.MAP_TYPE_SATELLITE);
 			// this.btnMapTypeSwitch.setText(R.string.btn_map_view);
 		}
 	}
 
 	/*
-	 * private void makeUseOfNewLocation(Location location) { Log.d(DEBUG,
+	 * private void makeUseOfNewLocation(Location location) { Log.d(TAG,
 	 * "testing"); }
 	 */
 
-	private void getNearestMRT(double mLatitude, double mLongitude) {
+	// private void getNearestMRT(double mLatitude, double mLongitude) {
+	private void getNearestMRT() {
 		// get the place(s)
-		StringBuilder sb = new StringBuilder(
-				"https://maps.googleapis.com/maps/api/place/nearbysearch/json?");
-		sb.append("location=" + String.valueOf(mLatitude) + ","
-				+ String.valueOf(mLongitude));
-		sb.append("&radius=1111");// distance less than 1.111km; assumption that
-									// reasonable walking distance <= 1km
-		sb.append("&rankBy=" + "distance");// does not work with custom 'radius'
-											// -
-											// https://developers.google.com/maps/documentation/javascript/places#place_search_requests
-		sb.append("&types=" + "subway_station");// type 'subway_station'
-		sb.append("&sensor=true");
-		sb.append("&key=AIzaSyCCPl_JtGPUQaQ9yZIyK-dvsduyWZy4ZAs");
+
+		StringBuilder sb = new StringBuilder(URL_GOOGLE_PLACES_API);
+		sb.append(PARAM_LOCATION + String.valueOf(this.curLoc.latitude) + ","
+				+ String.valueOf(this.curLoc.longitude));
+		sb.append(PARAM_RADIUS);// distance less than 1.111km; assumption that
+								// reasonable walking distance <= 1km
+		sb.append(PARAM_SORT_BY);// does not work with custom 'radius'
+									// -
+									// https://developers.google.com/maps/documentation/javascript/places#place_search_requests
+		sb.append(PARAM_TYPE);// type 'subway_station'
+		sb.append(PARAM_SENSOR);
+		sb.append(PARAM_KEY);
 
 		if (D)
-			Log.d(DEBUG, sb.toString());
+			Log.d(TAG, sb.toString());
 
 		// Creating a new non-ui thread task to download Google place json data
-		PlacesTask placesTask = new PlacesTask();
+		// PlacesTask placesTask = new PlacesTask();
+		JsonTask jsonTask = new JsonTask(this, TASK_PLACES_DOWNLOAD);
 
 		// Invokes the "doInBackground()" method of the class PlaceTask
-		placesTask.execute(sb.toString());
+		// placesTask.execute(sb.toString());
+		jsonTask.execute(sb.toString());
 	}
 
 	private void getPathToMRT(LatLng origin, LatLng des) {// should I use
 															// GeoPoint objects
 															// instead, how
 															// about LatLng?
+		// final String PARAM_SENSOR = "";
+
 		// get the place(s)
-		StringBuilder sb = new StringBuilder(
-				"http://maps.google.com/maps/api/directions/json?");
-		sb.append("origin=" + String.valueOf(origin.latitude) + ","
+		StringBuilder sb = new StringBuilder(URL_GOOGLE_DIRECTIONS_API);
+		sb.append(PARAM_ORIGIN + String.valueOf(origin.latitude) + ","
 				+ String.valueOf(origin.longitude));
-		sb.append("&destination=" + String.valueOf(des.latitude) + ","
+		sb.append(PARAM_DEST + String.valueOf(des.latitude) + ","
 				+ String.valueOf(des.longitude));
-		sb.append("&mode=walking");// distance less than 1km
-		sb.append("&sensor=true");
+		sb.append(PARAM_MODE);// distance less than 1km
+		sb.append(PARAM_SENSOR);
 
 		if (D)
-			Log.d(DEBUG, "the request sent was " + sb.toString());
+			Log.d(TAG, "the request sent was " + sb.toString());
 		// sb.append("&rankby=distance");
 		// sb.append("&key=AIzaSyCCPl_JtGPUQaQ9yZIyK-dvsduyWZy4ZAs");
 
 		// Creating a new non-ui thread task to download Google place json data
-		DirectionsTask dirTask = new DirectionsTask();
+		// DirectionsTask dirTask = new DirectionsTask();
+		JsonTask jsonTask = new JsonTask(this, TASK_DIRECTIONS_DOWNLOAD);
 
 		// Invokes the "doInBackground()" method of the class PlaceTask
-		dirTask.execute(sb.toString());
+		jsonTask.execute(sb.toString());
 	}
 
 	@Override
 	protected void onPause() {
 		// What do I with the location update here to save battery?
 		super.onPause();
-
+		
+		MyApplication.uiInBackground = true;
 		/*
 		 * if (mlocManager!=null) {
 		 * 
@@ -407,13 +463,13 @@ public class NearestMRTActivity extends FragmentActivity {
 		 * mlocManager = null; }
 		 */
 	}
-	
+
 	@Override
 	public void onStop() {
 		super.onStop();
 		EasyTracker.getInstance(this).activityStop(this);
 	}
-	
+
 	@Override
 	public void onStart() {
 		super.onStart();
@@ -423,6 +479,9 @@ public class NearestMRTActivity extends FragmentActivity {
 	@Override
 	protected void onResume() {
 		super.onResume();
+		
+		MyApplication.uiInBackground = false;
+		
 		// mlocManager was reset to null onPause()
 		if (locationManager != null) {
 			if (network_enabled) {
@@ -436,14 +495,14 @@ public class NearestMRTActivity extends FragmentActivity {
 			}
 		}
 	}
-	
+
 	@Override
 	public void onWindowFocusChanged(boolean hasFocus) {
 		super.onWindowFocusChanged(hasFocus);
 		this.mapTypeNormal = prefs.getBoolean(PREF_MAP_TYPE, true);
-		
-		if (!this.mapTypeNormal) { 
-		this.btnMapTypeSwitch.setText(R.string.btn_map_view);
+
+		if (!this.mapTypeNormal) {
+			this.btnMapTypeSwitch.setText(R.string.btn_map_view);
 		}
 	}
 
@@ -452,7 +511,8 @@ public class NearestMRTActivity extends FragmentActivity {
 
 		@Override
 		public void onLocationChanged(Location loc) {
-			Log.i(DEBUG, "testing");
+			Log.w(TAG, "onLocationChanged");
+			// Log.i(TAG, "testing");
 			// remove updates so that the listener is not called too much
 			if (locationManager != null)
 				locationManager.removeUpdates(this);
@@ -460,30 +520,16 @@ public class NearestMRTActivity extends FragmentActivity {
 			double mLatitude = loc.getLatitude();
 			double mLongitude = loc.getLongitude();
 
-			Log.i(DEBUG, "Updating current location");
-			Toast.makeText(getApplicationContext(),
+			Log.i(TAG, "Updating current location");
+			if (!MyApplication.uiInBackground) Toast.makeText(getApplicationContext(),
 					"Updating current location", Toast.LENGTH_LONG).show();
 			// SharedPreferences.Editor prefEditor = nearestMRTSettings.edit();
 			// prefEditor.putString("curLat", String.valueOf(mLatitude));
 			// prefEditor.putString("curLong", String.valueOf(mLongitude));
 			// prefEditor.commit();
 
-			curLoc = new LatLng(mLatitude, mLongitude);
+			updateCurrentLocation(new LatLng(mLatitude, mLongitude));
 
-			gooleMap.moveCamera(CameraUpdateFactory.newLatLng(curLoc));
-			gooleMap.animateCamera(CameraUpdateFactory.zoomTo(15));
-
-			// loc.getLatitude();
-			// loc.getLongitude();
-
-			String Text = "My current location is: " + "Latitud = "
-					+ loc.getLatitude() + "Longitud = " + loc.getLongitude();
-
-			// Toast.makeText( getApplicationContext(), Text,
-			// Toast.LENGTH_LONG).show();
-			Log.d(DEBUG, Text);
-
-			getNearestMRT(mLatitude, mLongitude);
 			// Test using dependency injection???
 			// getNearestMRT(LAT_NEX, LON_NEX);//NEX
 
@@ -503,15 +549,37 @@ public class NearestMRTActivity extends FragmentActivity {
 
 		@Override
 		public void onStatusChanged(String provider, int status, Bundle extras) {
-			Log.i(DEBUG, provider + " location is toggled");
+			Log.i(TAG, provider + " location is toggled");
 		}
 
+	}
+
+	private void updateCurrentLocation(LatLng loc) {
+		Log.i(TAG, "updateCurrentLocation");
+		Log.w(TAG, "lat is " + loc.latitude);
+		Log.w(TAG, "long is " + loc.longitude);
+		this.curLoc = loc;
+
+		gooleMap.moveCamera(CameraUpdateFactory.newLatLng(curLoc));
+		gooleMap.animateCamera(CameraUpdateFactory.zoomTo(15));
+
+		// loc.getLatitude();
+		// loc.getLongitude();
+
+		// String Text = "My current location is: " + "Latitud = "
+		// + loc.getLatitude() + "Longitud = " + loc.getLongitude();
+
+		// Toast.makeText( getApplicationContext(), Text,
+		// Toast.LENGTH_LONG).show();
+		// Log.d(TAG, Text);
+
+		getNearestMRT();
 	}
 
 	/*
 	 * private Runnable onRequestLocation = new Runnable() {
 	 * 
-	 * @Override public void run() { Log.i(DEBUG, "Updating location");
+	 * @Override public void run() { Log.i(TAG, "Updating location");
 	 * //Toast.makeText( getApplicationContext(), "Testing",
 	 * Toast.LENGTH_SHORT).show(); // Ask for a location
 	 * mlocManager.requestLocationUpdates(LocationManager.GPS_PROVIDER, 0, 0,
@@ -542,389 +610,142 @@ public class NearestMRTActivity extends FragmentActivity {
 		return true;
 	}
 
-	/** A class, to download Google Places */
-	private class PlacesTask extends AsyncTask<String, Integer, String> {
+	@Override
+	public void clearMap() {
+		this.gooleMap.clear();
+	}
 
-		String data = null;
+	@Override
+	public Marker addMarker() {
+		// TODO Auto-generated method stub
+		return null;
+	}
 
-		// Invoked by execute() method of this object
-		@Override
-		protected String doInBackground(String... url) {
-			// make asynctask wait for debugger
-			// android.os.Debug.waitForDebugger();
-			Log.i(DEBUG, "tring to get nearby mrt stations");
-			try {
-				data = downloadUrl(url[0]);
-			} catch (Exception e) {
-				Log.d(DEBUG, e.toString());
-			}
-			return data;
-		}
+	@Override
+	public void moveCamera() {
+		// TODO Auto-generated method stub
 
-		// Executed after the complete execution of doInBackground() method
-		@Override
-		protected void onPostExecute(String result) {
-			ParserTask parserTask = new ParserTask();
+	}
 
-			// Start parsing the Google places in JSON format
-			// Invokes the "doInBackground()" method of the class ParseTask
-			parserTask.execute(result);
+	@Override
+	public void getPathToMRT() {
+		// TODO Auto-generated method stub
+
+	}
+
+	@Override
+	public void onJsonDownloaded(String jsonString, byte task) {
+		switch (task) {
+		case TASK_PLACES_DOWNLOAD:
+			PlacesParserTask placesParserTask = new PlacesParserTask(this);
+			placesParserTask.execute(jsonString);
+			break;
+		case TASK_DIRECTIONS_DOWNLOAD:
+			DirectionsParserTask parserTask = new DirectionsParserTask(this);
+			parserTask.execute(jsonString);
+			break;
 		}
 
 	}
 
-	/** A class to parse the Google Places in JSON format */
-	private class ParserTask extends
-			AsyncTask<String, Integer, List<HashMap<String, String>>> {
-
-		JSONObject jObject;
-
-		// Invoked by execute() method of this object
-		@Override
-		protected List<HashMap<String, String>> doInBackground(
-				String... jsonData) {
-			// android.os.Debug.waitForDebugger();
-			List<HashMap<String, String>> places = null;
-			PlaceJSONParser placeJsonParser = new PlaceJSONParser();
-
-			try {
-				jObject = new JSONObject(jsonData[0]);
-
-				/** Getting the parsed data as a List construct */
-				places = placeJsonParser.parse(jObject);
-
-			} catch (Exception e) {
-				Log.d(DEBUG, e.toString());
-			}
-			return places;
-		}
-
-		// Executed after the complete execution of doInBackground() method
-		@Override
-		protected void onPostExecute(List<HashMap<String, String>> list) {
-			Log.i(DEBUG, "displaying the nearest mrt station");
-
-			// Clears all the existing markers
-			gooleMap.clear();
-
-			// add a balloon showing the current location or the start point of
-			// the walking path
-			Marker startMark = gooleMap.addMarker(new MarkerOptions().position(
-					curLoc).title("You are here"));
-			startMark.showInfoWindow();
-
-			if (list.size() > 0) {
-
-				// Creating a marker
-				MarkerOptions markerOptions = new MarkerOptions();
-
-				// Getting a place from the places list
-				HashMap<String, String> hmPlace = list.get(list.size() - 1);// only
-																			// getting
-																			// the
-																			// last
-																			// one
-
-				// Getting name
-				String name = hmPlace.get("place_name");
-
-				// Getting vicinity
-				String vicinity = hmPlace.get("vicinity");
-
-				String nearestMRT = name + " MRT Station";// +vicinity;
-
-				// Show nearest MRT station in text
-				nearestMRTLoc.setText(nearestMRT);
-				nearestMRTLoc.setTextAppearance(getApplicationContext(),
-						R.style.MyBoldText);
-
-				// Getting latitude of the place
-				double lat = Double.parseDouble(hmPlace.get("lat"));
-
-				// Getting longitude of the place
-				double lng = Double.parseDouble(hmPlace.get("lng"));
-
-				LatLng latLng = new LatLng(lat, lng);
-
-				// Getting the direction to the nearest MRT station
-				/*
-				 * nearestMRTSettings = getSharedPreferences(NEARESTMRT_PREFS,
-				 * Context.MODE_PRIVATE); double curLat =
-				 * Double.parseDouble(nearestMRTSettings.getString("curLat",
-				 * DEF_LAT)); double curLon =
-				 * Double.parseDouble(nearestMRTSettings.getString("curLon",
-				 * DEF_LON)); LatLng curLatLng = new LatLng(curLat, curLon);
-				 */
-				getPathToMRT(curLoc, latLng);
-
-				// Setting the position for the marker
-				markerOptions.position(latLng);
-
-				// Setting the title for the marker.
-				// This will be displayed on taping the marker
-				markerOptions.title(name + " : " + vicinity);
-
-				// Placing a marker on the touched position
-				Marker mrtMark = gooleMap.addMarker(markerOptions);
-				// mrtMark.showInfoWindow();
-
-				gooleMap.moveCamera(CameraUpdateFactory.newLatLng(latLng));
-				// mGoogleMap.animateCamera(CameraUpdateFactory.zoomTo(15));
-
-				Log.i(DEBUG, "the stations found, furthest first, are:");
-				for (int i = 0; i < list.size(); i++) {
-					hmPlace = list.get(i);
-					name = hmPlace.get("place_name");
-					Log.i(DEBUG, (i + 1) + ')' + name);
-				}
-			} else {
-				Log.i(DEBUG, "couldn't find any MRT stations");
-			}
-
-		}
+	@Override
+	public void onError() {
+		Log.e(TAG, "onError");
 
 	}
 
-	/** A method to download json data from url */
-	private String downloadUrl(String strUrl) throws IOException {
-		Log.i(DEBUG, "downloading JSON data of the nearest MRT station");
+	@Override
+	public void onNearestMRTFound(MRT mrt) {
+		Log.w(TAG, "onNearestMRTFound");
 
-		String data = "";
-		InputStream iStream = null;
-		HttpURLConnection urlConnection = null;
-		try {
-			URL url = new URL(strUrl);
+		// Show nearest MRT station in text
+		this.nearestMRTLoc.setText(mrt.getName());
+		this.nearestMRTLoc.setTextAppearance(getApplicationContext(),
+				R.style.MyBoldText);
 
-			// Creating an http connection to communicate with url
-			urlConnection = (HttpURLConnection) url.openConnection();
+		// Getting the direction to the nearest MRT station
+		/*
+		 * nearestMRTSettings = getSharedPreferences(NEARESTMRT_PREFS,
+		 * Context.MODE_PRIVATE); double curLat =
+		 * Double.parseDouble(nearestMRTSettings.getString("curLat", DEF_LAT));
+		 * double curLon =
+		 * Double.parseDouble(nearestMRTSettings.getString("curLon", DEF_LON));
+		 * LatLng curLatLng = new LatLng(curLat, curLon);
+		 */
+		if (this.curLoc != null)
+			getPathToMRT(this.curLoc, mrt.getLatLng());
+		// this.callback.getPathToMRT();
 
-			// Connecting to url
-			urlConnection.connect();
+		MarkerOptions markerOptions = new MarkerOptions();
+		// Setting the position for the marker
+		markerOptions.position(mrt.getLatLng());
 
-			// Reading data from url
-			iStream = urlConnection.getInputStream();
+		// Setting the title for the marker.
+		// This will be displayed on taping the marker
+		// markerOptions.title(name + " : " + vicinity);
 
-			BufferedReader br = new BufferedReader(new InputStreamReader(
-					iStream));
+		// Placing a marker on the touched position
+		Marker mrtMark = this.gooleMap.addMarker(markerOptions);
+		// Marker mrtMark = this.callback.addMarker();
+		// mrtMark.showInfoWindow();
 
-			StringBuffer sb = new StringBuffer();
+		this.gooleMap
+				.moveCamera(CameraUpdateFactory.newLatLng(mrt.getLatLng()));
+		// this.callback.moveCamera();
+		// mGoogleMap.animateCamera(CameraUpdateFactory.zoomTo(15));
 
-			String line = "";
-			while ((line = br.readLine()) != null) {
-				sb.append(line);
-			}
-
-			data = sb.toString();
-
-			br.close();
-
-		} catch (Exception e) {
-			Log.d(DEBUG, e.toString());
-		} finally {
-			iStream.close();
-			urlConnection.disconnect();
-		}
-
-		return data;
-	}
-
-	/** A class, to download Google Directions */
-	private class DirectionsTask extends AsyncTask<String, Integer, String> {
-
-		String data = null;
-
-		// Invoked by execute() method of this object
-		@Override
-		protected String doInBackground(String... url) {
-			// android.os.Debug.waitForDebugger();
-			Log.i(DEBUG, "getting the walking route to nearest mrt stations");
-			try {
-				data = downloadUrl(url[0]);
-			} catch (Exception e) {
-				Log.d(DEBUG, e.toString());
-			}
-			return data;
-		}
-
-		// Executed after the complete execution of doInBackground() method
-		@Override
-		protected void onPostExecute(String result) {
-			Log.i(DEBUG,
-					"data is downloaded from Google Directions API successfully");
-			DirParserTask parserTask = new DirParserTask();
-
-			// Start parsing the Google places in JSON format
-			// Invokes the "doInBackground()" method of the class ParseTask
-			parserTask.execute(result);
-		}
+		// Log.i(TAG, "the stations found, furthest first, are:");
+		// for (int i = 0; i < list.size(); i++) {
+		// hmPlace = list.get(i);
+		// name = hmPlace.get(PLACE_NAME);
+		// Log.i(TAG, (i + 1) + ')' + name);
+		// }
 
 	}
 
-	/** A class to parse the Google Places in JSON format */
-	private class DirParserTask extends
-			AsyncTask<String, Integer, List<HashMap<String, String>>> {
+	@Override
+	public void onDirectionsFound(Direction direction) {
+		Log.w(TAG, "onDirectionsFounds");
 
-		JSONObject jObject;
+		Log.w(TAG, "distance is " + direction.getDistance() + " and walking time is "
+				+ direction.getDuration());
+		// runOnUiThread(new Runnable() {
+		// public void run() {
 
-		// Invoked by execute() method of this object
-		@Override
-		protected List<HashMap<String, String>> doInBackground(
-				String... jsonData) {
-			// android.os.Debug.waitForDebugger();
-			List<HashMap<String, String>> routes = null;
-			DirectionJSONParser dirJsonParser = new DirectionJSONParser();
-			Log.i(DEBUG,
-					"trying to parse the response from Google Directions API");
-			try {
-				jObject = new JSONObject(jsonData[0]);
+		// stuff that updates ui
+		// wd = (TextView) findViewById(R.id.WalkingDistance);
+		this.wd.setText(direction.getDistance());
 
-				/** Getting the parsed data as a List construct */
-				routes = dirJsonParser.parse(jObject);
+		// wt = (TextView) findViewById(R.id.WalkingTime);
+		this.wt.setText(direction.getDuration());
 
-			} catch (Exception e) {
-				Log.d(DEBUG, e.toString());
-			}
-			return routes;
+		// }
+		// });
+		Log.i(TAG, "overview polyline is " + direction.getPolyLine());
+		List<LatLng> polyPoints = LocationUtils.decodePoly(direction.getPolyLine());
+
+		// Instantiates a new Polygon object and adds points to define a
+		// rectangle
+		PolylineOptions rectOptions = new PolylineOptions();
+
+		for (int i = 0; i < polyPoints.size() - 1; i++) {
+			rectOptions.add(polyPoints.get(i));
+
+			/*
+			 * LatLng src = polyPoints.get(i); LatLng dest = polyPoints.get(i +
+			 * 1); Polyline line = mGoogleMap.addPolyline(new PolylineOptions()
+			 * .add(new LatLng(src.latitude, src.longitude), new
+			 * LatLng(dest.latitude, dest.longitude))
+			 * .width(25).color(Color.RED).geodesic(true));
+			 */
 		}
 
-		// Executed after the complete execution of doInBackground() method
-		@Override
-		protected void onPostExecute(List<HashMap<String, String>> routes) {
+		// Get back the mutable Polygon
+		// rectOptions.color(Color.BLUE).geodesic(true);
 
-			// Clears all the existing markers
-			// mGoogleMap.clear();
-
-			// for(int i=0;i<list.size();i++){
-
-			// Getting latitude of the place
-			// double lat = Double.parseDouble(hmPlace.get("lat"));
-
-			// Getting longitude of the place
-			// double lng = Double.parseDouble(hmPlace.get("lng"));
-
-			// Getting name
-			// String name = hmPlace.get("place_name");
-
-			// Getting vicinity
-			// String vicinity = hmPlace.get("vicinity");
-
-			// String nearestMRT = name + " MRT Station";//+vicinity;
-
-			// LatLng latLng = new LatLng(lat, lng);
-
-			// Setting the position for the marker
-			// markerOptions.position(latLng);
-
-			// Setting the title for the marker.
-			// This will be displayed on taping the marker
-			// markerOptions.title(name + " : " + vicinity);
-
-			// Placing a marker on the touched position
-			// mGoogleMap.addMarker(markerOptions);
-
-			// mGoogleMap.moveCamera(CameraUpdateFactory.newLatLng(latLng));
-			// mGoogleMap.animateCamera(CameraUpdateFactory.zoomTo(15));
-
-			// TextView nearestMRTLoc = (TextView)
-			// findViewById(R.id.NearestMRTLocation);
-			// nearestMRTLoc.setText(nearestMRT);
-			// }
-			String distance = "testing";
-			String duration = "testing";
-			String polyline = "-NA-";
-
-			// Getting a place from the places list
-			if (routes != null && !routes.isEmpty()) {
-				HashMap<String, String> hmRoute = routes.get(0);// only getting
-																// the first one
-				// Getting distance to MRT station/ length of route
-				distance = hmRoute.get("distance");
-				duration = hmRoute.get("duration");
-				polyline = hmRoute.get("polyline");
-
-				Log.i(DEBUG, "distance is " + distance
-						+ " and walking time is " + duration);
-				// runOnUiThread(new Runnable() {
-				// public void run() {
-
-				// stuff that updates ui
-				// wd = (TextView) findViewById(R.id.WalkingDistance);
-				wd.setText(distance);
-
-				// wt = (TextView) findViewById(R.id.WalkingTime);
-				wt.setText(duration);
-
-				// }
-				// });
-				Log.i(DEBUG, "overview polyline is " + polyline);
-				List<LatLng> polyPoints = decodePoly(polyline);
-
-				// Instantiates a new Polygon object and adds points to define a
-				// rectangle
-				PolylineOptions rectOptions = new PolylineOptions();
-
-				for (int i = 0; i < polyPoints.size() - 1; i++) {
-					rectOptions.add(polyPoints.get(i));
-
-					/*
-					 * LatLng src = polyPoints.get(i); LatLng dest =
-					 * polyPoints.get(i + 1); Polyline line =
-					 * mGoogleMap.addPolyline(new PolylineOptions() .add(new
-					 * LatLng(src.latitude, src.longitude), new
-					 * LatLng(dest.latitude, dest.longitude))
-					 * .width(25).color(Color.RED).geodesic(true));
-					 */
-				}
-
-				// Get back the mutable Polygon
-				// rectOptions.color(Color.BLUE).geodesic(true);
-
-				Polyline line = gooleMap.addPolyline(rectOptions.color(
-						Color.BLUE).geodesic(true));
-				// Log.i(DEBUG, "why is nothing drawn "+line.isVisible());
-
-			} else
-				Log.i(DEBUG, "not getting anything");
-
-		}
-
-	}
-
-	private List<LatLng> decodePoly(String encoded) {
-
-		List<LatLng> poly = new ArrayList<LatLng>();
-		int index = 0, len = encoded.length();
-		int lat = 0, lng = 0;
-
-		while (index < len) {
-			int b, shift = 0, result = 0;
-			do {
-				b = encoded.charAt(index++) - 63;
-				result |= (b & 0x1f) << shift;
-				shift += 5;
-			} while (b >= 0x20);
-			int dlat = ((result & 1) != 0 ? ~(result >> 1) : (result >> 1));
-			lat += dlat;
-
-			shift = 0;
-			result = 0;
-			do {
-				b = encoded.charAt(index++) - 63;
-				result |= (b & 0x1f) << shift;
-				shift += 5;
-			} while (b >= 0x20);
-			int dlng = ((result & 1) != 0 ? ~(result >> 1) : (result >> 1));
-			lng += dlng;
-
-			// LatLng p = new LatLng((int) (((double) lat / 1E5) * 1E6), (int)
-			// (((double) lng / 1E5) * 1E6));
-			LatLng p = new LatLng((((double) lat / 1E5)),
-					(((double) lng / 1E5)));
-
-			poly.add(p);
-		}
-
-		return poly;
+		Polyline line = gooleMap.addPolyline(rectOptions.color(Color.BLUE)
+				.geodesic(true));
+		// Log.i(TAG, "why is nothing drawn "+line.isVisible());
 	}
 
 }

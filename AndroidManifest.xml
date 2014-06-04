@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.fuzzybee7.nmrt"
-    android:versionCode="4"
-    android:versionName="1.0.4" >
+    android:versionCode="5"
+    android:versionName="1.0.5" >
 
     <permission
         android:name="com.fuzzybee7.nmrt.permission.MAPS_RECEIVE"
@@ -13,6 +13,8 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
     <uses-permission android:name="com.google.android.providers.gsf.permission.READ_GSERVICES" />
+    <!-- <uses-permission android:name="android.permission.WAKE_LOCK"/>-->
+    
     <!--
      The following two permissions are not required to use
      Google Maps Android API v2, but are recommended.
@@ -30,15 +32,16 @@
         android:targetSdkVersion="17" />
 
     <application
+        android:name="com.fuzzybee7.application.MyApplication"
         android:allowBackup="true"
-        android:debuggable="false"
+        
         android:icon="@drawable/ic_launcher"
         android:label="@string/app_name"
         android:theme="@style/AppTheme" >
         <activity
             android:name="com.fuzzybee7.nmrt.NearestMRTActivity"
             android:label="@string/app_name"
-            android:configChanges="keyboardHidden|orientation|screenSize" >
+            android:configChanges="keyboardHidden|orientation" >
             
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

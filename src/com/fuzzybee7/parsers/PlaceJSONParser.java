@@ -1,4 +1,4 @@
-package com.fuzzybee7.nmrt;
+package com.fuzzybee7.parsers;
 
 import java.util.ArrayList;
 import java.util.HashMap;

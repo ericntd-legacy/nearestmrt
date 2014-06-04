@@ -6,7 +6,7 @@
     
     <string name="label_nearestmrt_location">Nearest MRT:</string>
     <string name="label_current_location">Current Location:</string>
-    <string name="label_walking_dis">Walking distance:</string>
+    <string name="label_walking_dis">Distance:</string>
     <string name="label_walking_time">Walking time:</string>
     <string name="loading">"Loading &#8230; Please wait!"</string>
     <string name="hello_world">Hello world!</string>

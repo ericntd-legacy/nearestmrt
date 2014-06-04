@@ -226,8 +226,8 @@ containing a value of this type.
     public static final class id {
         public static final int BtnMapTypeSwitch=0x7f05001e;
         public static final int LinearLayout1=0x7f050012;
-        public static final int NearestMRTLocation=0x7f050016;
         public static final int NearestMRTLocationTable=0x7f050013;
+        public static final int TextNearestMRTName=0x7f050016;
         public static final int WalkingDistance=0x7f050018;
         public static final int WalkingTime=0x7f05001b;
         public static final int about_menu_item=0x7f050022;
@@ -486,10 +486,13 @@ containing a value of this type.
          */
         public static final int AppBaseTheme=0x7f0a0000;
         /**  Application theme. 
- All customizations that are NOT specific to a particular API-level can go here. 
+ <item name="android:actionBarStyle">@style/MyActionBar</item>
          */
         public static final int AppTheme=0x7f0a0001;
-        public static final int MyBoldText=0x7f0a0002;
+        /**  <item name="android:displayOptions">showHome|useLogo</item>
+         */
+        public static final int MyActionBar=0x7f0a0002;
+        public static final int MyBoldText=0x7f0a0003;
     }
     public static final class styleable {
         /** Attributes that can be used with a AdsAttrs.
