@@ -20,7 +20,7 @@ public class AboutActivity extends Activity {
 		getMenuInflater().inflate(R.menu.options_about, menu);
 		
 		//menu.findItem(R.id.about_menu_item).setIntent(new Intent(this, AboutActivity.class));
-		menu.findItem(R.id.home_menu_item).setIntent(new Intent(this, NearestMRTActivity.class));//basically reload home
+		menu.findItem(R.id.home_menu_item).setIntent(new Intent(this, MainActivity.class));//basically reload home
 		//menu.findItem(R.id.refresh_menu_item).setIntent(new Intent(this, NearestMRTActivity.class));//basically reload home
 				
 		return true;
