@@ -44,7 +44,7 @@ import com.google.android.gms.maps.model.PolygonOptions;
 import com.google.android.gms.maps.model.Polyline;
 import com.google.android.gms.maps.model.PolylineOptions;
 // import com.google.android.maps.GeoPoint;
-import com.logentries.android.AndroidLogger;
+// import com.logentries.android.AndroidLogger;
 
 import android.location.Location;
 import android.location.LocationListener;
